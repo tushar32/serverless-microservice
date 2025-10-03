@@ -1,0 +1,39 @@
+{
+  "name": "orders-service",
+  "version": "1.0.0",
+  "description": "Orders microservice with DDD and clean architecture",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "lint": "eslint src/**/*.ts",
+    "clean": "rm -rf dist",
+    "deploy": "cd infrastructure && cdk deploy",
+    "synth": "cd infrastructure && cdk synth"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.400.0",
+    "@aws-sdk/lib-dynamodb": "^3.400.0",
+    "@aws-sdk/client-eventbridge": "^3.400.0",
+    "@shared/domain-primitives": "file:../../shared/domain-primitives",
+    "@shared/http-client": "file:../../shared/http-client",
+    "@shared/event-schemas": "file:../../shared/event-schemas",
+    "undici": "^5.28.0"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.119",
+    "@types/node": "^18.0.0",
+    "@types/jest": "^29.0.0",
+    "@typescript-eslint/eslint-plugin": "^5.0.0",
+    "@typescript-eslint/parser": "^5.0.0",
+    "aws-cdk": "^2.100.0",
+    "aws-cdk-lib": "^2.100.0",
+    "constructs": "^10.0.0",
+    "eslint": "^8.0.0",
+    "jest": "^29.0.0",
+    "ts-jest": "^29.0.0",
+    "typescript": "^5.0.0"
+  }
+}

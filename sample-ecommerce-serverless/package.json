@@ -1,0 +1,27 @@
+{
+  "name": "ecommerce-serverless-platform",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "services/*",
+    "shared/*"
+  ],
+  "scripts": {
+    "build": "lerna run build",
+    "test": "lerna run test",
+    "deploy": "lerna run deploy",
+    "deploy:all": "npm run build && lerna run deploy --stream",
+    "lint": "lerna run lint",
+    "clean": "lerna run clean && lerna clean -y"
+  },
+  "devDependencies": {
+    "@types/node": "^18.0.0",
+    "@typescript-eslint/eslint-plugin": "^5.0.0",
+    "@typescript-eslint/parser": "^5.0.0",
+    "aws-cdk": "^2.100.0",
+    "eslint": "^8.0.0",
+    "jest": "^29.0.0",
+    "lerna": "^7.0.0",
+    "typescript": "^5.0.0"
+  }
+}

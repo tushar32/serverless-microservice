@@ -1,0 +1,16 @@
+{
+  "version": "independent",
+  "npmClient": "npm",
+  "packages": [
+    "services/*",
+    "shared/*"
+  ],
+  "command": {
+    "publish": {
+      "ignoreChanges": ["*.md"]
+    },
+    "bootstrap": {
+      "hoist": true
+    }
+  }
+}
