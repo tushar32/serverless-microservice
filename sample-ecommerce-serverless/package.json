@@ -7,12 +7,19 @@
     "shared/*"
   ],
   "scripts": {
-    "build": "lerna run build",
-    "test": "lerna run test",
-    "deploy": "lerna run deploy",
-    "deploy:all": "npm run build && lerna run deploy --stream",
-    "lint": "lerna run lint",
-    "clean": "lerna run clean && lerna clean -y"
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "lint": "turbo run lint",
+    "type-check": "turbo run type-check",
+    "clean": "turbo run clean",
+    "deploy:all": "turbo run deploy",
+    "deploy:orders": "turbo run deploy --filter=orders-service",
+    "deploy:inventory": "turbo run deploy --filter=inventory-service",
+    "deploy:catalog": "turbo run deploy --filter=catalog-service",
+    "deploy:dev": "turbo run deploy:dev",
+    "deploy:staging": "turbo run deploy:staging",
+    "deploy:prod": "turbo run deploy:prod",
+    "deploy:affected": "turbo run deploy --filter=[HEAD^1]"
   },
   "devDependencies": {
     "@types/node": "^18.0.0",
@@ -22,6 +29,7 @@
     "eslint": "^8.0.0",
     "jest": "^29.0.0",
     "lerna": "^7.0.0",
+    "turbo": "^1.10.16",
     "typescript": "^5.0.0"
   }
 }

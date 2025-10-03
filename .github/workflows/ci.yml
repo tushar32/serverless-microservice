@@ -1,0 +1,94 @@
+name: CI Pipeline
+
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [main, develop]
+
+jobs:
+  # Detect what changed
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      orders: ${{ steps.filter.outputs.orders }}
+      inventory: ${{ steps.filter.outputs.inventory }}
+      catalog: ${{ steps.filter.outputs.catalog }}
+      shared: ${{ steps.filter.outputs.shared }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: dorny/paths-filter@v2
+        id: filter
+        with:
+          filters: |
+            orders:
+              - 'sample-ecommerce-serverless/services/orders-service/**'
+              - 'sample-ecommerce-serverless/shared/**'
+            inventory:
+              - 'sample-ecommerce-serverless/services/inventory-service/**'
+              - 'sample-ecommerce-serverless/shared/**'
+            catalog:
+              - 'sample-ecommerce-serverless/services/catalog-service/**'
+              - 'sample-ecommerce-serverless/shared/**'
+            shared:
+              - 'sample-ecommerce-serverless/shared/**'
+
+  # Build and test
+  build-and-test:
+    needs: changes
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [18.x]
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+          cache-dependency-path: sample-ecommerce-serverless/package-lock.json
+      
+      - name: Install dependencies
+        working-directory: sample-ecommerce-serverless
+        run: npm ci
+      
+      - name: Lint
+        working-directory: sample-ecommerce-serverless
+        run: npm run lint
+      
+      - name: Type check
+        working-directory: sample-ecommerce-serverless
+        run: npm run type-check
+      
+      - name: Build
+        working-directory: sample-ecommerce-serverless
+        run: npm run build
+      
+      - name: Test
+        working-directory: sample-ecommerce-serverless
+        run: npm run test
+      
+      - name: Upload coverage
+        uses: codecov/codecov-action@v3
+        with:
+          directory: sample-ecommerce-serverless/coverage
+          flags: unittests
+          fail_ci_if_error: false
+
+  # Security scan
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Run Snyk security scan
+        uses: snyk/actions/node@master
+        continue-on-error: true
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --severity-threshold=high

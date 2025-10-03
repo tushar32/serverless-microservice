@@ -1,0 +1,63 @@
+name: Deploy Catalog Service
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'sample-ecommerce-serverless/services/catalog-service/**'
+      - 'sample-ecommerce-serverless/shared/**'
+      - '.github/workflows/deploy-catalog.yml'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'dev' }}
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: sample-ecommerce-serverless/package-lock.json
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION || 'us-east-1' }}
+      
+      - name: Install dependencies
+        working-directory: sample-ecommerce-serverless
+        run: npm ci
+      
+      - name: Build Catalog Service
+        working-directory: sample-ecommerce-serverless
+        run: npm run deploy:catalog
+        env:
+          NODE_ENV: production
+          ENVIRONMENT: ${{ github.event.inputs.environment || 'dev' }}
+      
+      - name: Notify deployment
+        if: success()
+        run: |
+          echo "✅ Catalog Service deployed successfully to ${{ github.event.inputs.environment || 'dev' }}"
+      
+      - name: Notify failure
+        if: failure()
+        run: |
+          echo "❌ Catalog Service deployment failed"
