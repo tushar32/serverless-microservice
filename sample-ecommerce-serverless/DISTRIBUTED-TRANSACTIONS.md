@@ -8,6 +8,10 @@ This document explains how we handle distributed transactions across microservic
 - [Our Solution](#our-solution)
 - [Architecture Overview](#architecture-overview)
 - [Implementation Details](#implementation-details)
+  - [Pattern 1: Outbox Pattern](#pattern-1-outbox-pattern)
+  - [Alternative: EventBridge Pipes](#alternative-eventbridge-pipes-real-time-no-polling)
+  - [Pattern 2: Saga State Tracking](#pattern-2-saga-state-tracking)
+  - [Pattern 3: Idempotency](#pattern-3-idempotency)
 - [Flow Diagrams](#flow-diagrams)
 - [Key Components](#key-components)
 - [Testing Scenarios](#testing-scenarios)
@@ -220,6 +224,198 @@ export const handler: ScheduledHandler = async () => {
 
 ---
 
+### Alternative: EventBridge Pipes (Real-Time, No Polling!)
+
+**Problem**: Outbox Publisher has 30-second latency due to polling.
+
+**Solution**: Use EventBridge Pipes to publish events in real-time from DynamoDB Streams.
+
+#### Architecture with EventBridge Pipes
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│           Recommended Architecture with Pipes                │
+└──────────────────────────────────────────────────────────────┘
+
+1. Create Order
+   ↓
+2. Save to DynamoDB (with event metadata)
+   ↓
+3. Create Saga State (for tracking)
+   ↓
+4. DynamoDB Stream → EventBridge Pipe → EventBridge
+   ↓                    (automatic, real-time)
+5. Inventory Service receives event
+   ↓
+6. Process inventory reservation
+   ↓
+7. Publish result event
+   ↓
+8. Orders Service updates saga state
+```
+
+#### Implementation
+
+**Step 1: Enable DynamoDB Streams**
+
+```typescript
+// infrastructure/cdk/orders-stack.ts
+const ordersTable = new dynamodb.Table(this, 'OrdersTable', {
+  tableName: 'orders',
+  partitionKey: { name: 'orderId', type: dynamodb.AttributeType.STRING },
+  stream: dynamodb.StreamViewType.NEW_AND_OLD_IMAGES, // ← Enable streams
+  billingMode: dynamodb.BillingMode.PAY_PER_REQUEST
+});
+```
+
+**Step 2: Create EventBridge Pipe**
+
+```typescript
+// infrastructure/cdk/orders-stack.ts
+import * as pipes from 'aws-cdk-lib/aws-pipes';
+
+const ordersPipe = new pipes.CfnPipe(this, 'OrdersEventPipe', {
+  name: 'orders-to-eventbridge-pipe',
+  roleArn: pipeRole.roleArn,
+  
+  // Source: DynamoDB Stream
+  source: ordersTable.tableStreamArn!,
+  sourceParameters: {
+    dynamoDbStreamParameters: {
+      startingPosition: 'LATEST',
+      batchSize: 10,
+      maximumBatchingWindowInSeconds: 1
+    },
+    filterCriteria: {
+      filters: [{
+        pattern: JSON.stringify({
+          eventName: ['INSERT', 'MODIFY'],
+          dynamodb: {
+            NewImage: {
+              eventType: { S: [{ exists: true }] }
+            }
+          }
+        })
+      }]
+    }
+  },
+  
+  // Target: EventBridge
+  target: eventBus.eventBusArn,
+  targetParameters: {
+    eventBridgeEventBusParameters: {
+      detailType: '$.dynamodb.NewImage.eventType.S',
+      source: 'orders-service'
+    },
+    inputTemplate: JSON.stringify({
+      orderId: '$.dynamodb.NewImage.orderId.S',
+      customerId: '$.dynamodb.NewImage.customerId.S',
+      status: '$.dynamodb.NewImage.status.S',
+      eventData: '$.dynamodb.NewImage.eventData.S'
+    })
+  }
+});
+```
+
+**Step 3: Update Order Model (Add Event Metadata)**
+
+```typescript
+// domain/models/order.ts
+export class Order extends AggregateRoot<OrderProps> {
+  
+  static create(customerId: string, items: OrderItem[]): Order {
+    const orderId = this.generateId();
+    const order = new Order({
+      orderId,
+      customerId,
+      items,
+      totalAmount: this.calculateTotal(items),
+      status: OrderStatus.PENDING,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      // Add event metadata for Pipe
+      eventType: 'order.created',
+      eventData: JSON.stringify({
+        orderId,
+        customerId,
+        items: items.map(i => ({
+          productId: i.productId,
+          quantity: i.quantity,
+          unitPrice: i.unitPrice.amount
+        })),
+        totalAmount: this.calculateTotal(items).amount
+      })
+    }, orderId);
+    
+    return order;
+  }
+}
+```
+
+**Step 4: Simplified Use Case (No Outbox Publisher Needed!)**
+
+```typescript
+// application/use-cases/create-order.use-case.ts
+export class CreateOrderUseCase {
+  
+  async execute(dto: CreateOrderDTO): Promise<OrderResponseDTO> {
+    // Create order
+    const order = Order.create(dto.customerId, orderItems);
+    
+    // Create saga state
+    const sagaState = await this.sagaStateRepository.createSagaState(order.orderId);
+    
+    // Save order (with event metadata)
+    await this.orderRepository.save(order);
+    
+    // That's it! Pipe automatically publishes to EventBridge
+    // No outbox, no publisher Lambda needed!
+    
+    return this.toDTO(order);
+  }
+}
+```
+
+#### Comparison: Outbox vs Pipes
+
+| Aspect | Outbox Pattern | EventBridge Pipes |
+|--------|----------------|-------------------|
+| **Latency** | 30 seconds (polling) | < 1 second (real-time) |
+| **Components** | Orders table + Outbox table + Publisher Lambda | Orders table + Pipe |
+| **Cost** | Lambda invocations + DynamoDB reads | Pipe executions |
+| **Complexity** | Medium (3 components) | Low (2 components) |
+| **Reliability** | High (guaranteed delivery) | High (managed service) |
+| **Ordering** | Not guaranteed | Guaranteed (per partition key) |
+| **Atomicity** | ✅ Events saved with order | ✅ Events in DynamoDB record |
+| **Visibility** | Outbox table shows unpublished | CloudWatch metrics |
+
+#### When to Use Pipes
+
+**✅ Use EventBridge Pipes When:**
+- Real-time events needed (< 1 second latency)
+- DynamoDB is your source (Streams available)
+- Want to reduce Lambda costs (no polling Lambda)
+- Need ordering guarantees (per partition key)
+- Prefer managed service over custom code
+
+**❌ Use Outbox Pattern When:**
+- Complex business logic in event publishing
+- Need separate event storage for audit
+- Multiple event sources (not just DynamoDB)
+- Custom retry logic required
+- Already have Outbox infrastructure
+
+#### Benefits of Pipes Approach
+
+- ✅ **Real-time** - Events published in < 1 second
+- ✅ **Simpler** - No Outbox table, no Publisher Lambda
+- ✅ **Lower cost** - No polling Lambda invocations
+- ✅ **Managed** - AWS handles scaling, retries, monitoring
+- ✅ **Atomic** - Event metadata saved with order in single write
+- ✅ **Ordered** - Events processed in order per partition key
+
+---
+
 ### Pattern 2: Saga State Tracking
 
 **Problem**: How to monitor distributed transactions?
@@ -371,7 +567,73 @@ export const handler: EventBridgeHandler = async (event) => {
 
 ## Flow Diagrams
 
-### Success Flow
+### Comparison: Outbox vs EventBridge Pipes
+
+#### Outbox Pattern Flow (30s latency)
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│              Outbox Pattern (Polling-Based)                 │
+└─────────────────────────────────────────────────────────────┘
+
+Customer → Orders Service
+              ↓
+         Save to DynamoDB:
+         ├─ orders table
+         └─ outbox table (unpublished events)
+              ↓
+         Return 201 Created
+              ↓
+         ⏰ Wait 30 seconds...
+              ↓
+    Outbox Publisher Lambda (scheduled)
+         ├─ Poll outbox table
+         ├─ Get unpublished events
+         ├─ Publish to EventBridge
+         └─ Mark as published
+              ↓
+         EventBridge → Inventory Service
+              ↓
+         Process inventory
+              ↓
+         Publish result → Orders Service
+
+Total Latency: ~30-60 seconds
+Components: 3 (Orders table, Outbox table, Publisher Lambda)
+```
+
+#### EventBridge Pipes Flow (< 1s latency)
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│           EventBridge Pipes (Stream-Based)                  │
+└─────────────────────────────────────────────────────────────┘
+
+Customer → Orders Service
+              ↓
+         Save to DynamoDB:
+         └─ orders table (with event metadata)
+              ↓
+         DynamoDB Stream (automatic)
+              ↓
+         EventBridge Pipe (automatic)
+         ├─ Filter events
+         ├─ Transform payload
+         └─ Publish to EventBridge
+              ↓
+         EventBridge → Inventory Service
+              ↓
+         Process inventory
+              ↓
+         Publish result → Orders Service
+
+Total Latency: < 1 second
+Components: 2 (Orders table, Pipe)
+```
+
+---
+
+### Success Flow (Outbox Pattern)
 
 ```
 Customer     Orders         Outbox         Inventory      Orders
