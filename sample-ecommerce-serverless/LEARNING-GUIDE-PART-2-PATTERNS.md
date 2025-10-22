@@ -144,6 +144,12 @@ export class Order extends AggregateRoot<OrderProps> {
 ✅ **Flexibility**: Multiple creation methods  
 ✅ **Maintainability**: Change creation logic in one place  
 
+### When to Use the Factory Pattern:
+
+When the exact types of objects need to be determined at runtime.
+When you want to centralize the object creation logic.
+When the creation process involves complex logic or multiple steps.
+
 ---
 
 ## 2. Repository Pattern {#repository-pattern}
